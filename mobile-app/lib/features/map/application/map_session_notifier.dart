@@ -8,6 +8,9 @@ import '../../floors/data/floor_repository.dart';
 import '../../floors/domain/floor.dart';
 import '../../search/domain/destination.dart';
 import '../../search/domain/start_location.dart';
+import '../../routing/data/route_repository.dart';
+import '../../routing/domain/route_outcome.dart';
+import '../../routing/domain/route_preference.dart';
 import '../data/floor_map_repository.dart';
 import '../domain/floor_map.dart';
 
@@ -62,6 +65,8 @@ class MapSessionNotifier extends Notifier<MapSessionState> {
       floor,
       destination: current.destination,
       start: current.start,
+      preference: current.preference,
+      route: current.route,
     );
   }
 
@@ -76,6 +81,7 @@ class MapSessionNotifier extends Notifier<MapSessionState> {
       floorMap: current.floorMap,
       destination: destination,
       start: current.start,
+      preference: current.preference,
     );
   }
 
@@ -90,7 +96,72 @@ class MapSessionNotifier extends Notifier<MapSessionState> {
       floorMap: current.floorMap,
       destination: current.destination,
       start: start,
+      preference: current.preference,
     );
+  }
+
+  Future<void> setPreference(RoutePreference preference) async {
+    final current = state;
+    if (current is! MapSessionReady) {
+      return;
+    }
+    state = MapSessionReady(
+      building: current.building,
+      floors: current.floors,
+      floorMap: current.floorMap,
+      destination: current.destination,
+      start: current.start,
+      preference: preference,
+    );
+    if (current.start != null && current.destination != null) {
+      await calculateRoute();
+    }
+  }
+
+  Future<void> calculateRoute() async {
+    final current = state;
+    if (current is! MapSessionReady ||
+        current.start == null ||
+        current.destination == null ||
+        current.isCalculating) {
+      return;
+    }
+    state = MapSessionReady(
+      building: current.building,
+      floors: current.floors,
+      floorMap: current.floorMap,
+      destination: current.destination,
+      start: current.start,
+      preference: current.preference,
+      isCalculating: true,
+    );
+    final result = await ref
+        .read(routeRepositoryProvider)
+        .calculateRoute(
+          startNodeId: current.start!.id,
+          destinationNodeId: current.destination!.nodeId,
+          preference: current.preference,
+        );
+    state = switch (result) {
+      Success<RouteOutcome>(value: final route) => MapSessionReady(
+        building: current.building,
+        floors: current.floors,
+        floorMap: current.floorMap,
+        destination: current.destination,
+        start: current.start,
+        preference: current.preference,
+        route: route,
+      ),
+      Failure<RouteOutcome>(error: final error) => MapSessionReady(
+        building: current.building,
+        floors: current.floors,
+        floorMap: current.floorMap,
+        destination: current.destination,
+        start: current.start,
+        preference: current.preference,
+        routeFailure: _asFailure(error),
+      ),
+    };
   }
 
   Future<void> _loadFloor(
@@ -99,6 +170,8 @@ class MapSessionNotifier extends Notifier<MapSessionState> {
     Floor floor, {
     Destination? destination,
     StartLocation? start,
+    RoutePreference preference = RoutePreference.shortest,
+    RouteOutcome? route,
   }) async {
     state = const MapSessionLoading();
     final mapResult = await ref
@@ -111,6 +184,8 @@ class MapSessionNotifier extends Notifier<MapSessionState> {
         floorMap: floorMap,
         destination: destination,
         start: start,
+        preference: preference,
+        route: route,
       ),
       Failure<FloorMap>(error: final error) => MapSessionFailure(
         _asFailure(error),
@@ -147,6 +222,10 @@ class MapSessionReady extends MapSessionState {
     required this.floorMap,
     this.destination,
     this.start,
+    this.preference = RoutePreference.shortest,
+    this.route,
+    this.routeFailure,
+    this.isCalculating = false,
   });
 
   final BuildingDetail building;
@@ -154,6 +233,10 @@ class MapSessionReady extends MapSessionState {
   final FloorMap floorMap;
   final Destination? destination;
   final StartLocation? start;
+  final RoutePreference preference;
+  final RouteOutcome? route;
+  final AppFailure? routeFailure;
+  final bool isCalculating;
 }
 
 class MapSessionFailure extends MapSessionState {

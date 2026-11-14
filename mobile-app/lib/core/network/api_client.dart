@@ -99,6 +99,20 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, Object?>> postObject(
+    String path, {
+    required Map<String, Object?> data,
+  }) async {
+    try {
+      final response = await _dio.post<Object?>(path, data: data);
+      return _asObjectMap(response.data);
+    } on DioException catch (error) {
+      throw _failureFor(error);
+    } on FormatException {
+      throw const InvalidResponseFailure();
+    }
+  }
+
   Map<String, Object?> _asObjectMap(Object? value) {
     if (value is! Map<Object?, Object?>) {
       throw const FormatException('Expected an object.');

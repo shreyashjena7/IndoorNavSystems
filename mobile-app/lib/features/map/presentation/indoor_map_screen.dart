@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/full_state_view.dart';
 import '../../floors/domain/floor.dart';
+import '../../routing/domain/route_outcome.dart';
+import '../../routing/domain/route_preference.dart';
 import '../application/map_session_notifier.dart';
 import '../domain/floor_map.dart';
 
@@ -41,6 +43,10 @@ class _IndoorMapScreenState extends ConsumerState<IndoorMapScreen> {
         :final floorMap,
         :final destination,
         :final start,
+        :final preference,
+        :final route,
+        :final routeFailure,
+        :final isCalculating,
       ) =>
         _MapShell(
           buildingName: building.name,
@@ -49,6 +55,10 @@ class _IndoorMapScreenState extends ConsumerState<IndoorMapScreen> {
           floorMap: floorMap,
           destinationName: destination?.name,
           startName: start?.label,
+          preference: preference,
+          route: route,
+          routeFailureMessage: routeFailure?.message,
+          isCalculating: isCalculating,
         ),
       MapSessionFailure(:final failure) => Scaffold(
         body: FullStateView(
@@ -73,6 +83,10 @@ class _MapShell extends ConsumerWidget {
     required this.floorMap,
     required this.destinationName,
     required this.startName,
+    required this.preference,
+    required this.route,
+    required this.routeFailureMessage,
+    required this.isCalculating,
   });
 
   final String buildingName;
@@ -81,6 +95,10 @@ class _MapShell extends ConsumerWidget {
   final FloorMap floorMap;
   final String? destinationName;
   final String? startName;
+  final RoutePreference preference;
+  final RouteOutcome? route;
+  final String? routeFailureMessage;
+  final bool isCalculating;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -177,11 +195,9 @@ class _MapShell extends ConsumerWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(
-                      destinationName == null
-                          ? 'Explore this floor'
-                          : 'Destination: $destinationName',
-                      style: Theme.of(context).textTheme.titleMedium,
+                    _PanelHeading(
+                      destinationName: destinationName,
+                      route: route,
                     ),
                     const SizedBox(height: AppSpacing.x2),
                     Text(
@@ -209,6 +225,47 @@ class _MapShell extends ConsumerWidget {
                             : 'Change destination',
                       ),
                     ),
+                    if (destinationName != null &&
+                        startName != null) ...<Widget>[
+                      const SizedBox(height: AppSpacing.x2),
+                      OutlinedButton.icon(
+                        onPressed: isCalculating
+                            ? null
+                            : () => _showPreferenceSelector(context, ref),
+                        icon: const Icon(Icons.tune),
+                        label: Text('Preference: ${preference.label}'),
+                      ),
+                      const SizedBox(height: AppSpacing.x2),
+                      FilledButton(
+                        onPressed: isCalculating
+                            ? null
+                            : () => ref
+                                  .read(mapSessionProvider.notifier)
+                                  .calculateRoute(),
+                        child: isCalculating
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Get route'),
+                      ),
+                    ],
+                    if (routeFailureMessage case final message?) ...<Widget>[
+                      const SizedBox(height: AppSpacing.x2),
+                      Text(message),
+                    ],
+                    if (route case final NoRouteOutcome noRoute) ...<Widget>[
+                      const SizedBox(height: AppSpacing.x2),
+                      Text(noRoute.message),
+                    ],
+                    if (route case final FoundRoute found) ...<Widget>[
+                      const SizedBox(height: AppSpacing.x2),
+                      for (final warning in found.warnings)
+                        Text(warning.message),
+                    ],
                   ],
                 ),
               ),
@@ -217,6 +274,80 @@ class _MapShell extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  void _showPreferenceSelector(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.x4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                'Route preferences',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: AppSpacing.x2),
+              RadioGroup<RoutePreference>(
+                groupValue: preference,
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  Navigator.of(sheetContext).pop();
+                  ref.read(mapSessionProvider.notifier).setPreference(value);
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: RoutePreference.values
+                      .map(
+                        (option) => RadioListTile<RoutePreference>(
+                          value: option,
+                          title: Text(option.label),
+                          subtitle: Text(option.description),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PanelHeading extends StatelessWidget {
+  const _PanelHeading({required this.destinationName, required this.route});
+
+  final String? destinationName;
+  final RouteOutcome? route;
+
+  @override
+  Widget build(BuildContext context) {
+    if (route case final FoundRoute found) {
+      return Text(
+        'Est. ${_formatDuration(found.estimatedDurationSeconds)} · ${found.distanceMeters.toStringAsFixed(0)} m',
+        style: Theme.of(context).textTheme.titleMedium,
+      );
+    }
+    return Text(
+      destinationName == null
+          ? 'Explore this floor'
+          : 'Destination: $destinationName',
+      style: Theme.of(context).textTheme.titleMedium,
+    );
+  }
+
+  String _formatDuration(int seconds) {
+    if (seconds < 60) {
+      return '$seconds s';
+    }
+    return '${(seconds / 60).ceil()} min walk';
   }
 }
 
